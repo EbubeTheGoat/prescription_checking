@@ -2,4 +2,4 @@ fastapi
 uvicorn[standard]
 requests
 python-multipart
-openai-agents-sdk
+openai>=1.0.0
