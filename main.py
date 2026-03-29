@@ -10,12 +10,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from agents import Agent, Runner, ModelSettings, function_tool, trace
 from agents.tool import WebSearchTool
+import sendgrid
+from sendgrid.helpers.mail import Mail, Email, To, Content
 
 app = FastAPI(title="Prescription Checker API")
 
+origins = [
+    "https://myfrontend.vercel.app",  # <-- your actual frontend URL
+]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, set this to your Vercel domain
+    allow_origins=origins,  # In production, set this to your Vercel domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,92 +50,17 @@ class FullCheckRequest(BaseModel):
 # ─── Tools ───────────────────────────────────────────────────────────────────
 
 @function_tool
-def check_drug_interactions(drug_names: list[str]) -> str:
-    """
-    Takes a list of drug names, fetches their RxCUIs from the NLM API,
-    and checks for interactions between every pair of drugs.
-    """
-    base_url = "https://rxnav.nlm.nih.gov/REST"
-    rxcuis = []
-    drug_map = {}
-
-    for drug in drug_names:
-        response = requests.get(
-            f"{base_url}/rxcui.json",
-            params={"name": drug, "search": 1}
-        ).json()
-        try:
-            rxcui = response['idGroup']['rxnormId'][0]
-            rxcuis.append(rxcui)
-            drug_map[rxcui] = drug
-        except (KeyError, IndexError):
-            return f"Error: Could not find a clinical ID for '{drug}'. It may be an unsupported brand name."
-
-    if len(rxcuis) < 2:
-        return "Need at least two recognized drugs to check for interactions."
-
-    interactions_found = []
-
-    for i in range(len(rxcuis)):
-        for j in range(i + 1, len(rxcuis)):
-            rxcui1 = rxcuis[i]
-            rxcui2 = rxcuis[j]
-
-            url = f"{base_url}/interaction/interaction.json?rxcui={rxcui1}&sources=ONCHigh"
-            response = requests.get(url).json()
-
-            if 'interactionTypeGroup' not in response:
-                url = f"{base_url}/interaction/list.json?rxcuis={rxcui1}+{rxcui2}"
-                response = requests.get(url).json()
-
-            if 'fullInteractionTypeGroup' in response:
-                for group in response['fullInteractionTypeGroup']:
-                    for interaction_type in group['fullInteractionType']:
-                        for pair in interaction_type['interactionPair']:
-                            pair_rxcuis = [
-                                c['minConceptItem']['rxcui']
-                                for c in pair['interactionConcept']
-                            ]
-                            if rxcui1 in pair_rxcuis or rxcui2 in pair_rxcuis:
-                                severity = pair.get('severity', 'Unknown')
-                                description = pair.get('description', 'No description.')
-                                drug1_name = drug_map[rxcui1]
-                                drug2_name = drug_map[rxcui2]
-                                interactions_found.append(
-                                    f"[{drug1_name} + {drug2_name}] "
-                                    f"Severity: {severity} — {description}"
-                                )
-
-    if not interactions_found:
-        return (
-            "No known interactions found in the RxNorm database for these drugs.\n"
-            "Note: Absence of data does not mean absence of interaction. "
-            "Always consult a pharmacist for clinical decisions."
-        )
-
-    return "\n".join(interactions_found)
-
-
-@function_tool
 def send_email(email: str, message: str) -> str:
-    """Send an email with the prescription check results."""
-    try:
-        connection = smtplib.SMTP('smtp.gmail.com', 587)
-        connection.starttls()
-        connection.login(
-            os.getenv("EMAIL_ADDRESS", ""),
-            os.getenv("PASSWORD_KEY", "")
-        )
-        full_message = f"Subject: Prescription Check Results\n\n{message}"
-        connection.sendmail(
-            from_addr=os.getenv("EMAIL_ADDRESS", ""),
-            to_addrs=email,
-            msg=full_message
-        )
-        connection.quit()
-        return "Email sent successfully!"
-    except Exception as e:
-        return f"Failed to send email: {str(e)}"
+    """Send an email using SendGrid API."""
+    sg = sendgrid.SendGridAPIClient(api_key=os.getenv("SENDGRID_API_KEY"))
+    from_email = Email(os.getenv("EMAIL_ADDRESS"))
+    to_email = To(email)
+    subject = "Prescription Check Results"
+    content = Content("text/plain", message)
+    mail = Mail(from_email, to_email, subject, content).get()
+    response = sg.client.mail.send.post(request_body=mail)
+    return f"Email sent with status code {response.status_code}"
+
 
 # ─── Agents ──────────────────────────────────────────────────────────────────
 
@@ -162,20 +94,22 @@ research_agent = Agent(
     model_settings=ModelSettings(tool_choice="required"),
     output_type=WebSearchPlan
 )
+SEARCHES = 1
 
 contraindication_agent = Agent(
     name="Contraindication Checker",
     instructions=(
         "You are a contraindication checker. Follow these rules strictly:\n"
-        "1. ALWAYS call the check_drug_interactions tool first. Never answer from memory.\n"
-        "2. Pass the EXACT list of drug names given to you directly to the tool.\n"
-        "3. Report ONLY what the tool returns — do not add, modify, or summarize results.\n"
-        "4. If the tool returns no interactions, say exactly: 'No known interactions found in database.'\n"
-        "5. Never infer or make up interactions under any circumstances."
+        "1. You will use the web search tool first to gather information on possible interactions. Never answer from memory.\n"
+        "2. Report ONLY what the tool returns — do not add, modify, or summarize results.\n"
+        "3. Never infer or make up interactions under any circumstances.\n"
+        "4. Using the search results, determine if there are any contraindications or interactions between the drugs. If there are, list them clearly. If not, state 'No contraindications found.'"
+        f"5 Number of searches to perform: {SEARCHES}"
     ),
     model="gpt-4o-mini",
-    tools=[check_drug_interactions],
+    tools=[WebSearchTool(search_context_size="low")],
     model_settings=ModelSettings(tool_choice="required"),
+    
 )
 
 email_agent = Agent(
