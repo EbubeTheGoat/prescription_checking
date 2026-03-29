@@ -15,14 +15,10 @@ from sendgrid.helpers.mail import Mail, Email, To, Content
 
 app = FastAPI(title="Prescription Checker API")
 
-origins = [
-    "https://myfrontend.vercel.app",  # <-- your actual frontend URL
-]
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # In production, set this to your Vercel domain
+    allow_origins=["*"],  # In production, set this to your Vercel domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
