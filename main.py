@@ -189,36 +189,37 @@ async def full_check(
     results = {}
 
     # Step 1: Get drug names
-    if file:
-        contents = await file.read()
-        image_b64 = base64.b64encode(contents).decode("utf-8")
-        extracted = await extract_drugs_from_image(image_b64)
-        results["extracted_drugs"] = extracted
-        drug_input = extracted
-    elif drug_names:
-        drug_input = drug_names
-        results["extracted_drugs"] = drug_names
-    else:
-        raise HTTPException(status_code=400, detail="Provide either an image file or drug names.")
+    with trace("Full Check - Extraction"):
+        if file:
+            contents = await file.read()
+            image_b64 = base64.b64encode(contents).decode("utf-8")
+            extracted = await extract_drugs_from_image(image_b64)
+            results["extracted_drugs"] = extracted
+            drug_input = extracted
+        elif drug_names:
+            drug_input = drug_names
+            results["extracted_drugs"] = drug_names
+        else:
+            raise HTTPException(status_code=400, detail="Provide either an image file or drug names.")
 
-    # Step 2: Research + contraindications in parallel
-    research_task = asyncio.create_task(research_drugs(drug_input))
-    contraindication_task = asyncio.create_task(check_contraindications(drug_input))
+        # Step 2: Research + contraindications in parallel
+        research_task = asyncio.create_task(research_drugs(drug_input))
+        contraindication_task = asyncio.create_task(check_contraindications(drug_input))
 
-    analysis, contraindications = await asyncio.gather(research_task, contraindication_task)
+        analysis, contraindications = await asyncio.gather(research_task, contraindication_task)
 
-    results["analysis"] = analysis
-    results["contraindications"] = contraindications
+        results["analysis"] = analysis
+        results["contraindications"] = contraindications
 
-    # Step 3: Optional email
-    if email:
-        summary = (
-            f"Prescription Check Results\n\n"
-            f"Drugs Identified:\n{drug_input}\n\n"
-            f"Drug Analysis:\n{analysis}\n\n"
-            f"Contraindications:\n{contraindications}"
-        )
-        email_result = await send_results_email(email, summary)
-        results["email_status"] = email_result
+        # Step 3: Optional email
+        if email:
+            summary = (
+                f"Prescription Check Results\n\n"
+                f"Drugs Identified:\n{drug_input}\n\n"
+                f"Drug Analysis:\n{analysis}\n\n"
+                f"Contraindications:\n{contraindications}"
+            )
+            email_result = await send_results_email(email, summary)
+            results["email_status"] = email_result
 
-    return results
+        return results
