@@ -128,29 +128,33 @@ email_agent = Agent(
 # ─── Helper runners ──────────────────────────────────────────────────────────
 
 async def extract_drugs_from_image(image_base64: str) -> str:
-    # Use a list of content dictionaries instead of an f-string
+    # This is a list of 'Items'. We are sending ONE item of type 'message'.
     user_input = [
         {
-            "type": "text", 
-            "text": "Please extract all drug names from this prescription image. Return them as a comma-separated list."
-        },
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{image_base64}",
-                "detail": "high" # Use "high" so the agent can see handwriting clearly
-            }
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "text", 
+                    "text": "Extract all drug names from this prescription image. Return them as a comma-separated list."
+                },
+                {
+                    "type": "image_url", 
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_base64}"
+                    }
+                }
+            ]
         }
     ]
 
     result = await Runner.run(
         extract_text_agent,
-        input=user_input 
+        input=user_input
     )
     
-    # The result will contain the agent's final message
     return result.final_output
-
+    
 async def research_drugs(drug_names: str) -> str:
     result = await Runner.run(research_agent, input=drug_names)
     return result.final_output.analysis
