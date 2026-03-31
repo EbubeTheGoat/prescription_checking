@@ -2,23 +2,26 @@ import os
 import base64
 import smtplib
 import asyncio
+import json # <-- NEW IMPORT
 from typing import Optional
 
 import requests
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import StreamingResponse # <-- NEW IMPORT
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from agents import Agent, Runner, ModelSettings, function_tool, trace
 from agents.tool import WebSearchTool
 import sendgrid
 from sendgrid.helpers.mail import Mail, Email, To, Content
+from PIL import Image
+import io
 
 app = FastAPI(title="Prescription Checker API")
 
 origins = [
     "https://prescription-checking2.vercel.app",  # <-- your actual frontend URL
 ]
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -109,7 +112,6 @@ contraindication_agent = Agent(
     model="gpt-4o-mini",
     tools=[WebSearchTool(search_context_size="low")],
     model_settings=ModelSettings(tool_choice="required"),
-    
 )
 
 email_agent = Agent(
@@ -127,7 +129,6 @@ email_agent = Agent(
 
 # ─── Helper runners ──────────────────────────────────────────────────────────
 async def extract_drugs_from_image(image_base64: str) -> str:
-    # The SDK expects 'input_text' and 'input_image'
     user_input = [
         {
             "type": "message",
@@ -140,7 +141,7 @@ async def extract_drugs_from_image(image_base64: str) -> str:
                 {
                     "type": "input_image", 
                     "image_url": f"data:image/jpeg;base64,{image_base64}",
-                    "detail": "high" # Helps with messy medical handwriting
+                    "detail": "high"
                 }
             ]
         }
@@ -171,44 +172,24 @@ async def send_results_email(email: str, message: str) -> str:
 def root():
     return {"status": "Prescription Checker API is running"}
 
-from PIL import Image
-import io
-import base64
-from fastapi import UploadFile, File, HTTPException
-
 @app.post("/extract")
 async def extract_from_image(file: UploadFile = File(...)):
     """Extract drug names from an uploaded prescription image after resizing."""
     try:
-        # 1. Read the raw uploaded bytes
         contents = await file.read()
-        
-        # 2. Open the image using Pillow
         img = Image.open(io.BytesIO(contents))
-        
-        # 3. Convert to RGB if it's a PNG/RGBA (OpenAI prefers RGB for JPEGs)
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
-        
-        # 4. Resize the image. 1024px is usually plenty for AI to read text.
-        # .thumbnail maintains the aspect ratio so the image doesn't look stretched.
         max_size = (1024, 1024)
         img.thumbnail(max_size)
-        
-        # 5. Save the resized image back into a byte buffer
         buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=85) # 85 quality is a sweet spot for size vs clarity
+        img.save(buffer, format="JPEG", quality=85)
         resized_contents = buffer.getvalue()
-        
-        # 6. Base64 encode the NEW, smaller image
         image_b64 = base64.b64encode(resized_contents).decode("utf-8")
-        
-        # 7. Send to your extraction function
         extracted = await extract_drugs_from_image(image_b64)
         return {"extracted_drugs": extracted}
 
     except Exception as e:
-        # Log the error on Render so you can see what went wrong
         print(f"Error during processing: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -230,6 +211,8 @@ async def contraindications_endpoint(req: CheckRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ─── MODIFIED STREAMING ENDPOINT ──────────────────────────────────────────────
+
 @app.post("/full-check")
 async def full_check(
     file: Optional[UploadFile] = File(None),
@@ -237,41 +220,73 @@ async def full_check(
     email: Optional[str] = Form(None),
 ):
     """
-    Full pipeline: extract (if image provided) → research → contraindication check → optional email.
+    Full pipeline streaming back Server-Sent Events (SSE).
     """
-    results = {}
+    async def event_generator():
+        try:
+            yield f"data: {json.dumps({'status': 'Starting pipeline...'})}\n\n"
 
-    # Step 1: Get drug names
-    if file:
-        contents = await file.read()
-        image_b64 = base64.b64encode(contents).decode("utf-8")
-        extracted = await extract_drugs_from_image(image_b64)
-        results["extracted_drugs"] = extracted
-        drug_input = extracted
-    elif drug_names:
-        drug_input = drug_names
-        results["extracted_drugs"] = drug_names
-    else:
-        raise HTTPException(status_code=400, detail="Provide either an image file or drug names.")
+            # Step 1: Get drug names
+            if file:
+                yield f"data: {json.dumps({'status': 'Reading and extracting from image...'})}\n\n"
+                contents = await file.read()
+                
+                img = Image.open(io.BytesIO(contents))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                img.thumbnail((1024, 1024))
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=85)
+                resized_contents = buffer.getvalue()
 
-    # Step 2: Research + contraindications in parallel
-    research_task = asyncio.create_task(research_drugs(drug_input))
-    contraindication_task = asyncio.create_task(check_contraindications(drug_input))
+                image_b64 = base64.b64encode(resized_contents).decode("utf-8")
+                extracted = await extract_drugs_from_image(image_b64)
+                drug_input = extracted
+            elif drug_names:
+                drug_input = drug_names
+            else:
+                yield f"data: {json.dumps({'error': 'Provide either an image file or drug names.'})}\n\n"
+                return
 
-    analysis, contraindications = await asyncio.gather(research_task, contraindication_task)
+            # Push extracted drugs to frontend immediately
+            yield f"data: {json.dumps({'extracted_drugs': drug_input})}\n\n"
 
-    results["analysis"] = analysis
-    results["contraindications"] = contraindications
+            # Step 2: Research + contraindications in parallel
+            yield f"data: {json.dumps({'status': 'Researching and checking interactions...'})}\n\n"
 
-    # Step 3: Optional email
-    if email:
-        summary = (
-            f"Prescription Check Results\n\n"
-            f"Drugs Identified:\n{drug_input}\n\n"
-            f"Drug Analysis:\n{analysis}\n\n"
-            f"Contraindications:\n{contraindications}"
-        )
-        email_result = await send_results_email(email, summary)
-        results["email_status"] = email_result
+            async def wrap_research():
+                return "analysis", await research_drugs(drug_input)
 
-    return results
+            async def wrap_contra():
+                return "contraindications", await check_contraindications(drug_input)
+
+            analysis_text = ""
+            contra_text = ""
+
+            for coro in asyncio.as_completed([wrap_research(), wrap_contra()]):
+                key, result = await coro
+                if key == "analysis":
+                    analysis_text = result
+                    yield f"data: {json.dumps({'analysis': result})}\n\n"
+                elif key == "contraindications":
+                    contra_text = result
+                    yield f"data: {json.dumps({'contraindications': result})}\n\n"
+
+            # Step 3: Optional email
+            if email:
+                yield f"data: {json.dumps({'status': 'Sending email summary...'})}\n\n"
+                summary = (
+                    f"Prescription Check Results\n\n"
+                    f"Drugs Identified:\n{drug_input}\n\n"
+                    f"Drug Analysis:\n{analysis_text}\n\n"
+                    f"Contraindications:\n{contra_text}"
+                )
+                email_result = await send_results_email(email, summary)
+                yield f"data: {json.dumps({'email_status': email_result})}\n\n"
+
+            yield f"data: {json.dumps({'status': 'Complete'})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
