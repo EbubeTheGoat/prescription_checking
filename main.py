@@ -15,10 +15,14 @@ from sendgrid.helpers.mail import Mail, Email, To, Content
 
 app = FastAPI(title="Prescription Checker API")
 
+origins = [
+    "https://prescription-checking2.vercel.app/",  # <-- your actual frontend URL
+]
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, set this to your Vercel domain
+    allow_origins=origins,  # In production, set this to your Vercel domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -148,15 +152,45 @@ async def send_results_email(email: str, message: str) -> str:
 def root():
     return {"status": "Prescription Checker API is running"}
 
+from PIL import Image
+import io
+import base64
+from fastapi import UploadFile, File, HTTPException
+
 @app.post("/extract")
 async def extract_from_image(file: UploadFile = File(...)):
-    """Extract drug names from an uploaded prescription image."""
-    contents = await file.read()
-    image_b64 = base64.b64encode(contents).decode("utf-8")
+    """Extract drug names from an uploaded prescription image after resizing."""
     try:
+        # 1. Read the raw uploaded bytes
+        contents = await file.read()
+        
+        # 2. Open the image using Pillow
+        img = Image.open(io.BytesIO(contents))
+        
+        # 3. Convert to RGB if it's a PNG/RGBA (OpenAI prefers RGB for JPEGs)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        
+        # 4. Resize the image. 1024px is usually plenty for AI to read text.
+        # .thumbnail maintains the aspect ratio so the image doesn't look stretched.
+        max_size = (1024, 1024)
+        img.thumbnail(max_size)
+        
+        # 5. Save the resized image back into a byte buffer
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=85) # 85 quality is a sweet spot for size vs clarity
+        resized_contents = buffer.getvalue()
+        
+        # 6. Base64 encode the NEW, smaller image
+        image_b64 = base64.b64encode(resized_contents).decode("utf-8")
+        
+        # 7. Send to your extraction function
         extracted = await extract_drugs_from_image(image_b64)
         return {"extracted_drugs": extracted}
+
     except Exception as e:
+        # Log the error on Render so you can see what went wrong
+        print(f"Error during processing: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/research")
@@ -189,37 +223,36 @@ async def full_check(
     results = {}
 
     # Step 1: Get drug names
-    with trace("Full Check - Extraction"):
-        if file:
-            contents = await file.read()
-            image_b64 = base64.b64encode(contents).decode("utf-8")
-            extracted = await extract_drugs_from_image(image_b64)
-            results["extracted_drugs"] = extracted
-            drug_input = extracted
-        elif drug_names:
-            drug_input = drug_names
-            results["extracted_drugs"] = drug_names
-        else:
-            raise HTTPException(status_code=400, detail="Provide either an image file or drug names.")
+    if file:
+        contents = await file.read()
+        image_b64 = base64.b64encode(contents).decode("utf-8")
+        extracted = await extract_drugs_from_image(image_b64)
+        results["extracted_drugs"] = extracted
+        drug_input = extracted
+    elif drug_names:
+        drug_input = drug_names
+        results["extracted_drugs"] = drug_names
+    else:
+        raise HTTPException(status_code=400, detail="Provide either an image file or drug names.")
 
-        # Step 2: Research + contraindications in parallel
-        research_task = asyncio.create_task(research_drugs(drug_input))
-        contraindication_task = asyncio.create_task(check_contraindications(drug_input))
+    # Step 2: Research + contraindications in parallel
+    research_task = asyncio.create_task(research_drugs(drug_input))
+    contraindication_task = asyncio.create_task(check_contraindications(drug_input))
 
-        analysis, contraindications = await asyncio.gather(research_task, contraindication_task)
+    analysis, contraindications = await asyncio.gather(research_task, contraindication_task)
 
-        results["analysis"] = analysis
-        results["contraindications"] = contraindications
+    results["analysis"] = analysis
+    results["contraindications"] = contraindications
 
-        # Step 3: Optional email
-        if email:
-            summary = (
-                f"Prescription Check Results\n\n"
-                f"Drugs Identified:\n{drug_input}\n\n"
-                f"Drug Analysis:\n{analysis}\n\n"
-                f"Contraindications:\n{contraindications}"
-            )
-            email_result = await send_results_email(email, summary)
-            results["email_status"] = email_result
+    # Step 3: Optional email
+    if email:
+        summary = (
+            f"Prescription Check Results\n\n"
+            f"Drugs Identified:\n{drug_input}\n\n"
+            f"Drug Analysis:\n{analysis}\n\n"
+            f"Contraindications:\n{contraindications}"
+        )
+        email_result = await send_results_email(email, summary)
+        results["email_status"] = email_result
 
-        return results
+    return results

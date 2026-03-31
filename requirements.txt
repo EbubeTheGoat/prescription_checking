@@ -2,5 +2,5 @@ fastapi
 uvicorn[standard]
 requests
 python-multipart
-openai-agents
-sendgrid
+openai-agents-sdk
+Pillow
