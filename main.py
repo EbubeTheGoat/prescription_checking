@@ -126,23 +126,21 @@ email_agent = Agent(
 )
 
 # ─── Helper runners ──────────────────────────────────────────────────────────
-
 async def extract_drugs_from_image(image_base64: str) -> str:
-    # This is a list of 'Items'. We are sending ONE item of type 'message'.
+    # The SDK expects 'input_text' and 'input_image'
     user_input = [
         {
             "type": "message",
             "role": "user",
             "content": [
                 {
-                    "type": "text", 
-                    "text": "Extract all drug names from this prescription image. Return them as a comma-separated list."
+                    "type": "input_text", 
+                    "text": "Extract all drug names from this prescription. Return as a comma-separated list."
                 },
                 {
-                    "type": "image_url", 
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_base64}"
-                    }
+                    "type": "input_image", 
+                    "image_url": f"data:image/jpeg;base64,{image_base64}",
+                    "detail": "high" # Helps with messy medical handwriting
                 }
             ]
         }
