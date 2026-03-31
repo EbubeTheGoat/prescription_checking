@@ -16,7 +16,7 @@ from sendgrid.helpers.mail import Mail, Email, To, Content
 app = FastAPI(title="Prescription Checker API")
 
 origins = [
-    "https://prescription-checking2.vercel.app/",  # <-- your actual frontend URL
+    "https://prescription-checking2.vercel.app",  # <-- your actual frontend URL
 ]
 
 
