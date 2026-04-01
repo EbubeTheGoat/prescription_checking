@@ -64,7 +64,7 @@ def send_email(email: str, message: str) -> str:
 
 # ─── Agents ──────────────────────────────────────────────────────────────────
 
-HOW_MANY_SEARCHES = 2
+HOW_MANY_SEARCHES = 1
 
 extract_text_agent = Agent(
     name="Extract Text Agent",
