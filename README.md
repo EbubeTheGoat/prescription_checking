@@ -1,7 +1,7 @@
 # Prescription Safety Checker
 # It is used to check prescriptions and send the results to your email.
 
-Prescription Safety Checker is a robust healthcare technology application engineered to check prescriptions for contraindications and flag them. Designed for pharmacy informatics and clinical administrative workflows, the website helps to reduce possible contraindications in prescrptions and optionally send the information to you as an email.
+Prescription Safety Checker is a high-performance digital health platform designed to enhance medication safety and pharmaceutical integrity. Engineered for the 2026 healthcare landscape, this application provides an intelligent interface for drug interaction screening, dosage verification, and pharmaceutical authentication. By integrating automated clinical decision support, the tool helps healthcare providers and patients prevent adverse drug reactions (ADRs) and identify potential counterfeit medications. Whether used for e-pharmacy compliance or as a standalone clinical pharmacology resource, Prescription Checker leverages real-time data analytics to ensure that every prescription is safe, accurate, and fully aligned with NDPR and global health data standards.
 
 
 ![github readme](https://github.com/user-attachments/assets/5f0493c3-5ed6-4d45-bd7f-eedf3b3eb9ca)
