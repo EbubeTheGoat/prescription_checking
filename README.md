@@ -1,5 +1,5 @@
 # Prescription Safety Checker
-It is used to check prescriptions and send the results to your email.
+#It is used to check prescriptions and send the results to your email.
 
 Prescriber Safety Checker is a robust healthcare technology application engineered to automate and secure the medical provider verification process. Designed for pharmacy informatics and clinical administrative workflows, the platform facilitates real-time credential validation, ensuring strict adherence to regulatory compliance and HIPAA security standards. By leveraging data-driven analytics and a scalable digital health architecture, this tool mitigates prescription fraud and enhances patient safety through precise National Provider Identifier (NPI) lookups and sanction monitoring. Whether integrated into an Electronic Health Record (EHR) ecosystem or used as a standalone clinical decision support tool, Prescriber Checker optimizes the integrity of the medication fulfillment cycle.
 
