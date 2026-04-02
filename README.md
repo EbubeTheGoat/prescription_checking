@@ -20,4 +20,17 @@ First, clone the repository and install the server-side dependencies:
 Create a .env file in the root directory and add your configuration:
 
 4. Running the Server( In this situation, I used Render)
-5. 
+   
+5. Frontend Setup
+To run the full application, you must also set up the client-side interface.
+Go to the Frontend Repo: Prescriber Checker Frontend →https://github.com/EbubeTheGoat/prescription_checking2.git
+Follow the installation instructions in that repository's README.md.
+Ensure your Frontend .env points to the Backend URL (http://localhost:5000).
+
+6. Run your Server (In the situation, i used Vercel)
+7. Known Issues:
+   a. High latency
+   b. Only one page for uploading
+   c. Problems with extracting the image
+
+Solutions coming soon
